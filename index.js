@@ -56,6 +56,7 @@ function eWeLink(log, config, api) {
     this.accessories = new Map();
     this.authenticationToken = config['authenticationToken'];
     this.devicesFromApi = new Map();
+    this.waitingForResponse = 0;
 
     if (api) {
         // Save the API object as plugin needs to register new accessory via this object
@@ -190,7 +191,7 @@ function eWeLink(log, config, api) {
                                 services.temperature = true;
                                 services.humidity = true;
                             } else {
-                            	services.switch = true;
+                                services.switch = true;
                             }
                             if(switchesAmount > 1) {
                                 for(let i=0; i!==switchesAmount; i++) {
@@ -211,6 +212,38 @@ function eWeLink(log, config, api) {
 
                     platform.log("API key retrieved from web service is [%s]", platform.apiKey);
 
+                    // sendIfSafe is a wrapper around websocket send requests that delays sending new requests
+                    // until the last send request has been answered.
+                    // there's no first in first out of queued messages, so hopefully that's not an issue.
+                    platform.sendIfSafe = function(message) {
+                        platform.log("*********** sendIfSafe ("+ message + ") platform.waitingForResponse ="+platform.waitingForResponse);
+
+                        if (platform.waitingForResponse)
+                        {
+                            var waited = 0;
+                            var myInterval = setInterval(function() {
+                                waited += 0.5;
+                                platform.log("*********** ========== sendIfSafe Waited " + waited + "s so far.");
+                                if (waited > 10)
+                                {
+                                    platform.waitingForResponse = 0;
+                                    platform.log("*********** Waited over 10s, fake seeing last message response");
+                                }
+                                if (platform.waitingForResponse ==0)
+                                {
+                                    platform.waitingForResponse = 1;
+                                    clearInterval(myInterval);
+                                    platform.log("*********** ========== sendIfSafe now CLEAR ****");
+                                    platform.wsc.send(message);
+                                }
+                            }, 500);         
+                        } else {
+                            platform.waitingForResponse = 1;
+                            platform.log("********** sendIfSafe OK to send");
+                            platform.wsc.send(message);
+                        }
+                    };
+
                     // We have our devices, now open a connection to the WebSocket API
 
                     let url = 'wss://' + platform.config['webSocketApi'] + ':8080/api/ws';
@@ -222,13 +255,15 @@ function eWeLink(log, config, api) {
                     platform.wsc.open(url);
 
                     platform.wsc.onmessage = function(message) {
+                        platform.waitingForResponse = 0;
+                        platform.log("*********** onmessage ("+ message +") platform.waitingForResponse ="+platform.waitingForResponse);
 
                         // Heartbeat response can be safely ignored
                         if (message == 'pong') {
                             return;
                         }
 
-                        platform.log("WebSocket messge received: ", message);
+//                        platform.log("WebSocket messge received: ", message);
 
                         let json;
                         try {
@@ -263,7 +298,7 @@ function eWeLink(log, config, api) {
                         } else if (json.hasOwnProperty('config') && json.config.hb && json.config.hbInterval) {
                             if (!platform.hbInterval) {
                                 platform.hbInterval = setInterval(function () {
-                                    platform.wsc.send('ping');
+                                    platform.sendIfSafe('ping');
                                 }, json.config.hbInterval * 1000);
                             }
                         }
@@ -298,7 +333,7 @@ function eWeLink(log, config, api) {
 
                         platform.log('Sending login request [%s]', string);
 
-                        platform.wsc.send(string);
+                        platform.sendIfSafe(string);
 
                     };
 
@@ -914,11 +949,9 @@ eWeLink.prototype.setPowerState = function(accessory, isOn, callback) {
     if (platform.isSocketOpen) {
 
         setTimeout(function() {
-            platform.wsc.send(string);
-
-            // TODO Here we need to wait for the response to the socket
-
-            callback();
+            platform.sendIfSafe(string);
+            
+            callback('');
         }, 1);
 
     } else {
