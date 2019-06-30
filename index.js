@@ -239,7 +239,6 @@ function eWeLink(log, config, api) {
                             }, 500);         
                         } else {
                             platform.waitingForResponse = 1;
-                            platform.log("********** sendIfSafe OK to send");
                             platform.wsc.send(message);
                         }
                     };
@@ -256,14 +255,13 @@ function eWeLink(log, config, api) {
 
                     platform.wsc.onmessage = function(message) {
                         platform.waitingForResponse = 0;
-                        platform.log("*********** onmessage ("+ message +") platform.waitingForResponse ="+platform.waitingForResponse);
 
                         // Heartbeat response can be safely ignored
                         if (message == 'pong') {
                             return;
                         }
 
-//                        platform.log("WebSocket messge received: ", message);
+                        platform.log("WebSocket messge received: ", message);
 
                         let json;
                         try {
